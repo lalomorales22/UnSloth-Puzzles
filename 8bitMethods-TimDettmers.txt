@@ -1,0 +1,482 @@
+8-bit Methods for Efficient Deep Learning -- Tim Dettmers 
+Transcript
+
+
+Search in video
+Intro
+yeah thank you so much Daniel um so we have to talk today I talk about
+8-bit methods for efficiency deep learning um I added a couple of things to the talk I think the talk should now be
+called actually k-bit methods for efficiency learning um so yeah let me let me get started so
+the main sort of goal of what I do in my work is trying to make large models accessible if you look at the footprint
+of large language models um here we have some open source ones we see that both for inference and for fine-tuning means
+a lot of memory and sort of in my work I'm really trying to reduce that and
+um like two techniques that I developed was llm and Tate which um is an
+efficient inference method and it uses uh memory flip on behalf and then 8-bit optimizes it reduces the memory
+footprint during fine tuning um I also talk a little bit about upcoming work and that makes things
+really efficient so there we have 4-bit models with adapters and then you can
+fine-tune 65 billion llama model in a single GPU which I think will open up a
+lot of interesting things um but yeah so in this talk I will talk about
+um four different papers and one sort of in progress paper and it's a little bit about uh a new
+data type I developed um then 8-bit optimizes efficient inference in 8-bit then I study like what is actually the
+best bit Precision for your neural network and um then in the end a very efficient uh
+fine-tuning method and so before I go into the meat of these papers um a little bit of
+How does quantization work?
+background so a lot of my work is on quantization and so what is quantization so
+um if you see it very generally quantization is if you have a continuous signal you want to approximate it to be
+discrete and um you can see it a little bit like histogram binning so here in
+red I have a normal distribution a standard normal and then here you have 16 different bins and so this is
+histogram binning and each bin has equal width and so when you do
+um is um all the values in a sort of single bin if you quantize it to the middle
+value of that bin then this is equivalent to integer quantization or linear quantization and so if you have
+different data types not an integer but a float for example then you can see that it's the same way
+but now the width of each of these bins might vary so you no longer have equal
+widths of each pin but they might have different width um depending on where they are on the distribution
+so the more mathematical definition is um sort of if you want to have a general
+Quantization as a mapping
+definition of quantization that unifies all different kinds of data types so yeah it's an integer and a floating
+Point data type in four bits and you can see it as a mapping from
+um in indices to uh values of the data type so for example
+um you have indices 01234 and these are represented by a certain bit combination
+and these map for the integer or the inflow of data type to minus seven minus six minus four and so forth
+um if we want a universe sort of different data type we need to put them in the same range and we do that by
+normalizing by the absolute maximum value and so now they both or all data
+types are between -1 and 1 and now you can also compare them basically what the distributions of these data types if
+they're normalized and so with this we have a general definition we want to map integers to uh arrange uh two values in
+a range between minus one and one and if we want to quantize we just want
+to find if we want to quantize the number we want to find the index that corresponds to the value that is closest
+to that input value just to make that clear here
+Quantization Example: A non-standard 2-bit data ty
+have an example and also just to show that it's very general I have like a
+data type that's very non-standard it's not even symmetric it's a two-bit data type and so we have indices 0123 and the
+values minus one 0.3 0.5 and 1.0 and the input tens is at 10 minus
+three five four and so the first step that we do is we first want to normalize it into the the input tensor into the
+range minus one one we do that by dividing by the absolute maximum value the absolute maximum value
+is 10 so we divide by 10. the next step is find the closest Value in the values
+of our data type and then we have 1.0 0.3 0.5 0.5 now that we determine the
+closest values we can find the corresponding index in the map
+and this is basically the bits that we store if you want to de-quantize this bit
+representation we look at the indices and the corresponding values for these indices and then undo the normal uh the
+the quantization we denormalize by multiplying by absolute maximum value and so what we now have is the tensor
+10355 and if you look at the input tensor we have one last quantization error the minus three turn to two to
+three and so this shows that this data type is not very uh well suited for this
+input distribution and that is sort of an important consideration if you have quantization
+Floating point data types (FP8)
+different data types have different properties and that can give you different advantages or disadvantages
+it's always a trade-off but you need to be sort of conscious what trade-off you're making by choosing a certain data
+type and so here I have a floating Point data types with eight bits we always have one bit for the sign and now we
+have exponents which are basically 2 to the power of the integer value represented by the exponent and then the
+fraction which is the fractional component of the number and so if we
+have more exponents more bits for the exponent we can represent smaller and larger numbers but each number has is
+less precise it has less Precision after um basically uh the the comma
+um after the zero point if we have only one bit for the exponent
+we have a better position but we cannot represent numbers that are small and large
+so um both of these data types have sort of different trade-offs and so to overcome
+Dynamic exponent quantization
+uh the the sort of um disadvantages of both data data types and developed a new
+data type called Dynamic exponent quantization and so this works like this
+we have again one bit for the sign and now we have the first zero bits of
+exponent to the power of 10 or 10 to the power of the exponent then the first bit
+that is a one is an indicator Bridge with no other function just to indicate that the following bits after this bit
+represent the fraction and so um what we can do is indicator as
+we slide it back and forth to a different position we can change the number of exponent bits that we have or
+the number of fraction bits and so with that we can either represent very large
+and small numbers uh or we can represent numbers with very high precision
+the only downside is that intermediate numbers um they cannot be represented with high
+precision and so that is the trade of this data type
+and this data type will become important in API optimizes it's used in April
+optimizers so a common optimizer's atom an atom has a ratio and it has very small and very
+large numbers and there this data type can have quite some advantages
+Motivation: Optimizers take up a lot of memory!
+um but let me first talk about a little bit motivation why a good optimizers so
+um here at this representation of the memory that the neural network uses during fine tuning or training and
+um on the left side you see all the values that are dependent both on the
+number of parameters that you have and other things um like that depend on other things like
+sequence length of your inputs or the batch size and on the right size you
+have the memory and that is only dependent on how many parameters your model has these are the weights the
+gradients the main weights if you have 16-bit Precision training and then the atom buffer set piece of
+the optimizer States and the optimizer states are quite large then 32 bits and
+you have two of them and um so if we can transform these
+Optimizer States from 32-bit to 8 Bits we reduce overall memory footprint by 40
+percent and that's okay um so that is the motivation and if you apply sort of a bit uh optimizers we see
+What do outliers in quantization look like?
+like one big problem these are outliers and so here I have a similar quantization as before it's a four bit
+quantization of a normal distribution but now we have one big outlier at -10 and so what happens is if you have
+absolute maximum normalization is that um you have one bin that has a single
+number the outlier -10 and then all the bins between -10 and -3 they're
+completely empty and this means you have less bins for all the other values and that increases
+your overall error and so because atom is a ratio of
+optimized States um if you have some error it gets uh basically multiplied through the through
+the fraction um that means um small errors can have
+large consequences on the gradient update and can lead to instabilities and so um this is a big problem
+um in our work and we sort of avoided this problem uh by um doing the following if
+Block-wise quantization
+you have an Optimizer State we take it as a linear sequence and now we shank
+the optimizer State into um chunks of a certain length and then
+we do independent quantization for each of these states and each of these blocks
+basically has its own absolute maximum value and that means if an outliers in
+the block we isolate it in that block the outlier will affect the optimizer States in this block
+and we have higher error but all the other blocks are unaffected and they have high precision and so with this we
+can isolate the instabilities and make them less frequent and overall that is
+sufficient to stabilize the training and so this is the key method and so
+Putting it together: 8-bit optimizers
+here I can talk a little bit about the overhead so this is the procedure how you implement 8-bit optimizers and so
+um the main part is it's very expensive to load things from Global memory from dram
+into SRAM into cache and so um the decanterization and quantization is done
+in cash and that's about 100 times faster than doing it in global memory
+and so that makes it very fast and so um basically uh in this figure we assume
+that our Optimizer states are already in cash and what we then do is we apply the
+blocks then we find the absolute maximum value normalize it find the closest
+8-bit value find the corresponding index now we store it into dram in global memory which is slow then we do a slow
+read in eight bits put it into cash and now we do a lookup in Cache in L1 cache
+and this is again fast we do the denormalization and also in cash which
+is fast we multiply by absolute maximum value and now we have our dequantized Optimizer States and now we can do the
+next update with incoming gradients and so this is this is the procedure of
+8-bit optimizers and now you repeat this over and over again uh is that clear or any questions here
+I I actually had a question go ahead um so one one thing that I was wondering
+is uh you mentioned that some of these errors they seem to be due to outliers
+that you know if they happen they might result in uh major errors uh during the
+back propagation because of the cascading errors I think uh but then if
+they are outliers um another proposal could be hey just ignore them
+um and I think and I think we know when they happen like we can literally compute the amount of error so do you
+think that that would work too so yeah I actually studied this it was one thing that I tried so in
+quantization if you look at other fields that's quite common um um especially if it's sort of with
+electronics or physics yes now like you say only remove them this messes up my quantization but if you do that with
+neural networks often the performance the grades um some outlines are extreme and can lead to instabilities but if we remove
+them it also leads to perform a degradation some values are very large but also very important there are so
+large because they are so important so it's important to consider them to give them space so to speak
+um and so removing them actually hurts performance quite a bit that's interesting yeah thank you all right one
+more question one more question go ahead so just to make sure I understand I understood it right it's the number of
+blocks like 2 to the power of 8 or is that something else so this is something else you can choose
+a block size arbitrarily um yeah go ahead it's the number of Polo
+blocks to 50 things I know so so
+um so for example in this paper I use a block size of 4096 and so if your tensor
+has only 8 000 values then you have two blocks and so um the the how many blocks you
+have depends on how large your tensor is and what your block size is
+two I guess to follow up on that so basically is the idea of blocks uh is
+the idea here that those numbers that are in the same block they get processed in parallel in a way you want larger
+blocks uh so that you can do the quantization and dequantization in
+parallel for everything in that block yeah that that's also one major advantage so in the GPU there's a lot of
+benefit if you can sort of embarrassingly paralyze everything and this is the case because each graph is
+independent and the quantization runs independently and if you have many small cores on the GPU you can keep them all
+busier with no problem at all and um that is pretty nice so that makes it
+entire procedure it's a little bit faster it's not the main consideration because the main Contour consideration
+is really about stability training at all but it's a nice benefit to have some speed UPS
+um yeah if I actually go to the next figure this looks a little bit confusing it's a lot
+of different uh tasks but here we also see a small speed up all over the board
+um so the tasks over here is like fine tuning on natural language processing data sets we have imagenet
+classification machine translation um imagenet fine tuning and then language modeling with different size of
+Transformers and masked language modeling We compare to um sort of standard optimizers for these
+tasks and we find that apid optimizes um compared to the 32-bit standard
+optimizers which the same performance but um they save a lot of memory especially
+if your network is big for example for the 1.5 billion parameter Transformer we save 8.5 gigabytes and um the training
+is also just a little bit faster because you load small values from the slow
+memory and do everything in cash but things are fast and so um because of this block sort of architecture you can
+paralyze everything very smoothly and so that makes it the optimize also faster
+can you explain a little bit more about the process of loading from dram to SRAM and you know
+where what operation is done in the cache and a little more about that yes yes so
+um if if you go back here and still um basically the initial state is you do
+this couple of gradient steps you accumulate gradients and then you decide I want to do an Optimizer step and so
+there it begins basically on the right side with the index the index is stored that's the index of Optimizer from the
+last update and so then your load of um you load an 8-bit State into into memory
+and so it's basically four times faster than 32-bit Optimizer because of four times smaller
+so you say four times um in terms of latency to load that
+value now it's in cash the GPU cache is about 100 times faster than the global memory
+and now you do a lookout so the problem is um if you have a lookup so here we have
+basically a cohort of 256 values that's actually pretty low on the GPU and you
+do it in cash which is fast but um the shared memory accounts I've been using gpus it gets serialized is multiple
+threads X is the same element and so this is actually a slow operation an X operations then again passed the
+absolute maximum value and so forth so the slow thing here is actually the lookup it's not loading from memory it's
+not um the decanterization it's a lookup that uh sort of in the decanterization
+that's very slow and that's happening in cash but it's it's this low operational gpus and so the other operation where
+you basically store from Cache to Global memory is a final step on the left the
+finding the corresponding index and storing the values and that's basically what is standing cash in global memory
+uh one question here can you go back to like the big table nice next slide
+yeah for the time column how did you get at that time do you actually like train
+for like 700 days or is it like an estimate so this is these are GPU days
+so um if he has 100 GPU you only need to train for eight days
+um but um yeah this this is the runtime overall if you would have a single GPU and we
+ran that basically and so um that is also here the next table so here I have
+a little bit of ablation analysis on small models 209 million parameters these are trained um on um on a single
+GPU in eight days and so not that expensive and there everything looks good if you just have
+[Music] um stable embedding which in which I didn't talk about in detail
+um and the dynamic quantization which I introduced and so things look pretty fine but if you scale up to 1.3 billion
+or 1.5 billion um if you look at the column for unstable runs it increases to 100
+percent so basically all the models crash and if you introduce a stable embedding eighty
+percent of runs crash and only if you use a blockbust quantization then things
+are stable so this basically means um you could have done this research with
+less compute but some effects are just really only detectable in large models
+and um so you need to be careful um making generalizations if something works in small models doesn't mean it it
+scales okay um this force optimizes and the next
+part that I talk about is llm and date and um this is about inference
+um of large models on fewer resources so um if you look at large open source
+models opt 175 billion Bloom and now Salama and they are pretty expensive for
+inference and um some of these models you need to use multiple machines to do inference and so
+do you just use those models and you need fast networking multiple machines or gpus that's very expensive especially
+fast networking can be really expensive and so if you do it in 8-bit and you can
+do everything on one machine and so that's much cheaper much more accessible so now we can actually study these
+models quite well you don't need complicated software it's easy to do with with like common software that you
+find everywhere and so this was really the goal um let's do it in eight bits and so you quantize the model a finished model into
+Using OPT-175B on a single machine via 8-bit weig
+eight bits and then just lose it and so if you do that and compare performance here I have on the x-axis
+the model size and millions and billions of parameters and then on the y-axis the
+mean zero short accuracy on a couple of tasks so you just give the model a task and and ask it some questions and it
+gives um and here you basically scored did it get the answer right and then you take
+the mean over a couple of tasks and so if we do this in 16-bit everything looks fine performance improves as we scale up
+if we do it in 8-bit performance is fine under 2.7 billion and at 6.7 billion
+parameters things crash things stopped working and then it goes further down and after 13 billion everything is
+basically random performance so um complete breakdown of of the function of
+the Transformer and so this project was mostly about like figuring out what is what is
+happening here what is happening at 6.7 billion parameters can we prevented can we understand it and so
+The problem with quantizing outliers with large valu
+um again um you see like a recurring story it's outliers this time it's very special
+outliers um let me first sort of describe what the problem is with outliers and that was also basically the
+problem previously I showed it like with the normal distribution um if you look at sort of numerically
+here I have the same vector and the same block so to speak and we quantize it but
+now I am at an outlier 3.5 and then I double roughly double the outlier with
+sort of every time and on the right side I have the int 8 quantization so in this
+paper we do intake quantization and so um the red zeros show basically
+information that gets quantized to zero what is this zero if you denormalize
+with absolute maximum value it always stays zero and so this means this information is lost it's just gone you
+cannot recover it and if you have larger and larger housing you have more and more information which is just erased it
+never comes back and so if you have this for multiple layers you
+can imagine that more more information is erased more and more information becomes very noisy that at some point
+the Transformer breaks down and this is the main thing that we find in the Transformer as you scale up
+there's some very large outliers and they mess things up but the very interesting part is these
+outliers they become highly systematic and these outliers change how the
+Transformer Works they change how sparse the attention is how the attention Works
+itself and that's sort of a very interesting finding and because they're very structured we can actually find a
+very simple algorithm that works really well um just to demonstrate what it looks
+like so what I have here is a slice of a transformer and this is a slice of the
+input space of the Transformer and I have on the x-axis
+um hidden Dimensions or feature dimensions and on the y-axis I have sequence dimension of the Transformer so
+the sequence Dimensions tokens or words and the hidden Dimensions uh the feature
+that messes up is basically the corresponding inputs to a weight and if you look at the inputs of a small
+transformer with 125 million parameters what you see is 98.5 of the time it's
+just a normal distribution just the values look fine nothing special 1.5
+percent of the time on the very right column you see some outliers they're minus three minus six and minus seven
+and so this this doesn't look like anything special and so you scale a
+little bit up and then the proportion of outliers increases to five percent and there's five six and eight and you scale
+up a little bit more now it's nine percent now you think like maybe something is wrong here why do I get all these outliers that's already pretty
+common and now they're also really large minus 16 minus 10 minus 27.
+and then we scale up and it becomes more frequent and then at 6.7 billion we have to face ships now almost every slice of
+the input has outliers it's now an exception that everything is normally distributed these outliers are very
+large minus 40 minus 45 minus 61. and the very interesting thing is after the
+spaceshift the proportion no longer changes so even if we scale up it stays at 75 percent
+and and the outliers increase a little bit in size um but that's basically where the phase
+shift occurs where there where the attention changes a little bit its properties but then it stays there the
+Transformer learns something and then um basically finish learning and kept
+there and this is how it sort of looks numerically if we look at if you plot
+Emergent features: sudden vs. smooth emergence
+this data this is what it looks like so we have here two different plots and one
+is if we scale up models they usually perform better in terms of perplexity and perplexity just to measure how well
+they can predict words um sort of existing data how similar
+they are to predicting existing data and on the left side we have and the model
+size and billions and on the y-axis we have um two different measures uh the
+percentage of layers of tokens affected by outliers so how many layers have
+outliers that come into the layer and how many um uh sequence Dimensions or tokens how
+many words are affected by these outliers and so uh we see that as we
+pass this 6.7 billion Mark suddenly uh 75 of all input tokens are affected and
+100 of all layers so if you pick a random layer you know there will be an outlier there in a large model
+the very interesting thing is these outlines are highly systematic they occur in the same dimension in all
+layers so if I know a certain outlier in a large model is in a certain hidden
+dimension in a certain layer I know that this outline will be there for a future
+layer in the same dimension and that makes this very systematic and
+so um the other thing that I wanted to highlight with these plots is
+um we see the spaceshift and looks very dramatic it goes like from 30
+of tokens or sixty percent of layers to 100 of layers and looks very dramatic
+but if we actually plot the same plot in terms of perplexity it's a smooth exponential and that tells us something
+about this process it's an exponential process that sort of steadily grows but if if um at some point the Expo
+exponential growth is so rapid that it looks like a phase shift to us and so um
+this is basically an exponential process that levels off at some point and then the Transformer has learned
+what it needs to learn and stays there and yeah
+these are these dots on the in the in the in the diagram on the right side the
+dots are associated with batches of data not models
+so these are actually models yes so we have all kinds of different models and so
+um one thing and the first what we thought is like huh maybe this is a bug so we look at different models then we
+thought like maybe this is a bug in some software then we look at models from different software trained with
+different software so we have here like our models trained from open AI monitoring from meta Facebook and with
+their framework and models trained with open source model strength with other Frameworks and so we find all these
+patterns on all those models so with this we can basically say it's not a software but it's not a bug with any
+data or any company how they do things it's um it's in all Transformers it's a
+general pattern and it's not a function of the uh data
+type as in If instead of natural language if I have let's say computer vision data or like synthetic data it
+would still emerge so yeah in this study we only um study a national language data but
+um on in a similar project right now we studied language data or clip models
+which is language and vision and so in those models we find the same thing
+so my my hypothesis this is a property of attention and so as long as you have
+attention uh you find these outliers um we also have a project where we
+encourage outliers early on and so what we see is um so here things emerge at
+6.7 billion if you encourage these outliers systematically then it emerges
+much earlier but then we also see a thing that it stays there too so the Transformer actually learns faster if
+you encourage outliers but at some point it stops there and so um if if I look at
+the data that I have it points to that attention is a key part here so um it
+makes attention very sparse and make it helps the Transformer to attend to particular things in the input make
+things very discreet and this is beneficial in almost all modalities to select some specific information to
+focus on it or contrast it with some other things that you have and yeah that's my interpretation
+okay um yeah so so if he's out guys um as I shown before they grow rapidly this is
+what our quantizations uh destroys our quantization and so the other thing is because they're so systematic they are
+Mixed precision decomposition
+always occurring the same Dimension we can use a trick uh we extract all the um
+outliers and and do a separate matrix multiplication and 16-bit precision and
+then we um extract All the known outliers which are 99.9 to do an 8-bit
+precision and so once we have these two we add them together and with that we
+can recover the full performance of 16-bit Transformer but now 99.9 of
+Weights are an 8-bit so we have the memory Savings in some cases we can get some speed ups and but now we still have
+the full performance we see here blue the blue line matches the green line the
+blue line is our method the green line is the 16-bit Baseline and so with this we have a small model
+that is as good as our 1600 model foreign
+[Music] yeah and as we can see uh we saved a lot of memory now we can set models and that
+we couldn't fit before so um and now on sort of academic desktops
+you can fit a pretty large Model 66 billion and even on the free Cloud you can now sort of um use 13 billion models
+so that makes things much more accessible so the next project is about
+um the question if you have a pre-trained language model and you want to use it you can have a 16 billion
+parameter model in four bits or 30 billion parameter model in eight bits
+and so these models have the same bit footprint they use the same amount of bits which model is better
+and that is the question that I answer in this work and so uh why is a bit of
+uh footprint so important so an inference um the most expensive thing is loading
+things from the weight metrics the inputs is just a single token and you
+need to load the entire model weights into cash for the single token to do
+computation and so um the most expensive thing in the GPU is loading memory it's not computation
+it's loading memory and so because of this um here I have a representation I think
+it was opt 175 billion and so these the weight
+Matrix and the inputs are proportional and so that shows you that almost all memories in the weight Matrix this is
+the only thing that matters for performance for runtime performance for latency how long it takes to do an
+inference and so because the weight Matrix is just made of Bits And if you
+reduce the total bit footprint of your model you get faster inference and so
+then the question is how how do you allocate these bits more parameters with less Precision or higher Precision with
+less parameters and so [Music] um in this study we do sort of a very broad
+Bit-level scaling laws experimental setup overview
+study um we do a total of 75 000 zero short experiments over multiple tasks we study
+models from 19 million parameters to 176 billion parameters we study different
+models then also different precisions from three bit to 8-bit we skipped two bits because that leads to random
+performance it doesn't work and we use we study some um quantization
+Concepts like blocking which I introduced already before then some data types like the data type that I
+developed integer float and then also quantile quantization which is another data type
+and so if we take all of this and put it together we find this so here we have an
+opt model and on the x-axis we have the total number of bits in the model
+and again on the y-axis we have mean zero shots um accuracy on a number of tasks and we
+see lines now for three but four but eight bit and 16-bit and now we see that if we reduce a bit
+Precision we reduce the overall amount of bits in the model and um it's
+basically we use the same bits if we in four if we have four bits precision and
+tricep parameters compared to eight bits and so what we find is four bits seems
+to perform the best so basically what this plot says is if
+you want the best performance always try to use the largest model and quantize it in four bits
+and that's the main takeaway and the other thing that you see is a
+three bit it looks very Jagged and things break down in three bits and sort
+of the first thought for us was are these instabilities from outliers and so we study this
+um we develop a method that is similar to our date but which is works independently of the
+inputs we call it proxy quantization and here you have two different models you
+see uh in blue the three bit the jagged three bit and now an orange yellow we
+apply proxy quantization we see um but that removes a lot of sensibilities and
+free bit now works it's much better but it's not as good as for a bit 4-bit is
+still best and if we apply proxy quantization to four bits it doesn't improve performance so with this the
+main takeaway is yes if we look at outliers we can improve free web quantization but four bit is still
+optimal so the main takeaway is you should use full bits don't go through three bits
+um this is also true if you have more advanced quantization methods so gptq is
+a high position conversation method and here we see the same so gptq and 4-bit
+is blue and GPT q and three bits green and blue is better than Green so um it's
+also better for other quantization methods and we also see that if you care about outliers and you can almost be as good
+as these Advanced quantization methods that may uh basically adjust the error based on the inputs that you get and so
+this also shows outliers are important and it's most of the problem and quantization but outliers alone do not
+give you the best quantization and sometimes you just need more bits and you cannot go lower
+um okay uh the other things that we study is sort of what other things matter block Size Matters
+um and data types matter I want to go into the details here we
+What does help to improve scaling? Data types
+see uh float and quantile and maybe I talked a little about quantile because
+and that is used in the next project and so quantile quantization if if you
+remember early on I I said that integer quantization for a normal distribution is if you have bins in the histogram
+which have equal width now contract quantization is the same but you have equal distances in the
+commutative distribution function of of your input tensor and so what that does
+is basically it's similar to you could describe it as lossy Huffman coding
+um let me see if I have that here uh I talk later about it
+um but so um if you want basically each of the big
+combinations that you have in a data type and allocate the exact same number of values to each of these bins
+so basically you want a histogram where each bin has equal amount of values in them
+then this is quantile quantization um it has this property and so what it
+does is if you get a random so so if you want to predict which
+um the next number that is coming from like a tensor from a sequence in which
+bin will it be sorted then quantile quantization basically has maximum and
+entropy you do not know where it will be you're maximally uncertain because each
+pin is equally likely that the next number will be sorted in and so that is the main property onto a quantization
+um we see later that that can be quite efficient um okay I don't have so much time anymore I
+want to quickly talk about sort of upcoming project we'll probably finish in a couple of weeks we don't have uh
+sort of a title yet but the main thing is and now you can take a very big llama
+model get a check GPT quality model and you can get that on a single GPU so that
+makes things very widely accessible you'll be able to personalize very large models and you have basically a
+personalized check ubt very soon and so um the main thing is that we do in this
+project is the memory footprint is so large it's very difficult to do so usually
+um if you do fine tuning um a llama model it's about 800 gigabytes of GPU memory so if you have
+48 gigabyte gpus which are common gpus like an academic institutions that's a
+17 gpus and so that's very inaccessible and so what we do is the following
+we take the model one ties it to four bits so this is a pre-trained model that's Slama for example now what we do
+is we put low rank adapters on top of it and so low rank adapters have the
+parameters that will be fine-tuned and but the 4-bit model is frozen and so if
+you do um a gradient step and what we do is that in the backward pass we pass the
+gradients through the 4-bit model but we only update um the low rank adapters
+which are in higher precision and so what that that does is um all the weights go to four bits all
+the way certain gradients are very few the optimizer states are very small and the adapter is a very few usually only a
+couple percent of the overall parameter that the normal model has and so what this does is it reduces a memory foam
+considerably so now we have a 65 billion model and it only consumes 42 gigabytes
+of GPU memory that fits into one GPU and that is the main
+um method that we're using um we also have couple of Innovations
+Nested Quantization
+for quantization um I don't want to go into this in too
+much detail so um if you quantize with the small block size then as I said if your block size
+of 32 and your absolute maximum value as a 32-bit number you add basically one
+bit to your representation that means your four bit quantization turns into a five bit quantization
+and so what we do in this project is we quantize the quantization to the statistics again and so we take this one
+bit and quantize it again into four bits and that reduces the footprint again and
+so now we basically use 4.1 bits and
+um we save quite quite a few um gigabytes of that the other thing is if you have contract
+quantization this is a general technique for all distributions for all input tenses but we can specialize it just for
+normal distributions and so what you do is you take a normal distribution you find the quantiles of the normal
+distribution and now um the quantization values in the quantization maps are just the quantiles
+of this distribution and if you do this
+um for four bits you have 16 different values you see them at the bottom we call this
+a normal float basically a floating Point representation optimized for normal distributions for arbitrary
+normal distributions that are centered around zero that's usually all neural network weights and so if we look at
+this we get very good performance for this data type here I have different data types and the mean language
+modeling complexity which is a very good proxy for zero shot performance and we see that and we get much better
+perplexity if we use this normal flow compared to a 4-bit float and
+um so with that um our Precision is much higher and we
+can quantize lower without losing performance
+Instruction Tuning with 4-bit + Adapters
+um and this is my last slide just some sort of early results we fine-tune
+um um a T5 model on um Supernatural instruction data set and
+we basically replicate the full fine-tuning performance we also see that 16-bit base model plus adapters 8-bit
+based model plus adapters and four-bit based model plus adapters yields the same performance
+and that basically says that the quantization error that you have can be
+rectified through fine tuning and that is a indicator that we actually probably
+can go more aggressively even three bit maybe with this method we don't study in
+this paper but I think it opens up to even more efficient models that might run on mobile devices and so forth
+so um yeah very exciting Direction I think it will open up a lot of sort of potential to do all kinds of things with
+these very large models and yeah that's all that I have so with these methods um you can fine tune
+efficiently use mods efficiently for inference then with the newest method um
+like we open up fine-tuning for share TBT like models and to basically
+everyone yeah thank you
+questions or people on Zoom oh questions and follow-up to that
+um see right the the largest footprint here is the uh the weight Matrix loading
+piece um yeah so so my question here doesn't apply to training only to inference time
+um but if you give it any thoughts to uh there's a line of work to do model quantization and deployment to not gpus
+but to things like fpgas or A6 yeah like you basically you've removed the loading
+piece to the sort of circuit construction time
+yeah so so your question is what the carbon footprint would be on those
+devices yeah or if you've given any thoughts right to um being able to do this
+quantization and then deployment to devices of that nature yeah yes so what
+is very interesting about fpgas is because they're so flexible if you have data types like normal float
+4-bit Normal Float (NF4)
+um you can Implement them very efficiently so basically this work has one data type for storage one data type
+for computation and the overhand form um basically converting the storage type
+to the computation type in Cache is pretty fast and you can use but it is an
+overhead and so in fpga is what you can do is you can have special circuits that do fast lookup for these data types
+basically custom conversion of an arbitrary data source data type to a
+data type in which you can compute and efficiently and I think this is like a big opportunity to make things faster
+make things more efficient and with that also reduce the carbon footprint so if you have data types
+which are storage efficient um you need to load less memory that saves electricity
+um and um if you have sort of half the circuits full of the stakes type conversion you
+can do that without any performance penalty and so you also has to think about the Practical aspect like if you
+have the perfect data type it's not very useful if things are slow people will
+not use it so if you want to save electricity if you want to reduce carbon then you need to make it both practical
+efficient and um have sort of a benefit in terms of compute station I think this line of
+work and to combine with fpgas can go in that direction so combine for example
+this data type with fpgas
